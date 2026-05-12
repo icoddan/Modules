@@ -2,11 +2,13 @@
 
 from .. import loader, utils
 import logging
+import json
+import io
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
-class MusicPlaylistsMod(loader.Module):
+class MusicPlaylistsMod 2.0(loader.Module):
     """Модуль для создания и управления музыкальными плейлистами"""
     strings = {"name": "MusicPlaylists"}
 
@@ -235,3 +237,64 @@ class MusicPlaylistsMod(loader.Module):
         except Exception as e:
             logger.error(f"Failed to play track {track['title']}: {e}")
             await utils.answer(msg_status, f"<i>❌ Не удалось загрузить трек: {track['performer']} - {track['title']}</i>")
+
+    @loader.command()
+    async def plexportcmd(self, message):
+        """<название> - Экспортировать плейлист в файл"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
+            return
+        
+        playlists = self.db.get(self.strings["name"], "playlists", {})
+        if args not in playlists:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
+            return
+        
+        data = playlists[args]
+        file = io.BytesIO(json.dumps(data, ensure_ascii=False, indent=4).encode('utf-8'))
+        file.name = f"{args}_playlist.json"
+        
+        await self.client.send_file(
+            message.peer_id,
+            file,
+            caption=f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code>",
+            reply_to=message.reply_to_msg_id
+        )
+        await message.delete()
+
+    @loader.command()
+    async def plimportcmd(self, message):
+        """<название> (реплай на файл) - Импортировать плейлист из файла"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название для нового плейлиста.")
+            return
+        
+        reply = await message.get_reply_message()
+        if not reply or not reply.document:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, ответьте на файл плейлиста (.json).")
+            return
+        
+        try:
+            content = await reply.download_media(bytes)
+            data = json.loads(content.decode('utf-8'))
+            
+            if not isinstance(data, list):
+                await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный формат файла: ожидался список.")
+                return
+            
+            for track in data:
+                if not isinstance(track, dict) or not all(k in track for k in ["chat_id", "msg_id", "title", "performer"]):
+                    await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный формат файла: отсутствуют необходимые ключи трека.")
+                    return
+                    
+        except Exception as e:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> Ошибка при чтении файла: {e}")
+            return
+            
+        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists[args] = data
+        self.db.set(self.strings["name"], "playlists", playlists)
+        
+        await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно импортирован! ({len(data)} треков)")

@@ -199,7 +199,7 @@ class MusicPlaylistsMod(loader.Module):
 
     @loader.command()
     async def pltrackcmd(self, message):
-        """<название> <индекс> - Отправить определенный трек из плейлиста в текущий чат"""
+        """<название> <индекс> - Отправить определенный трек из плейлиста в текущий чат по индексу"""
         args_raw = utils.get_args_raw(message)
         args = args_raw.rsplit(maxsplit=1)
         
@@ -237,6 +237,60 @@ class MusicPlaylistsMod(loader.Module):
         except Exception as e:
             logger.error(f"Failed to play track {track['title']}: {e}")
             await utils.answer(msg_status, f"<i>❌ Не удалось загрузить трек: {track['performer']} - {track['title']}</i>")
+
+    @loader.command()
+    async def plsendcmd(self, message):
+        """<название> - Найти и отправить трек по названию (или части) из всех плейлистов"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название трека для поиска.")
+            return
+        
+        playlists = self.db.get(self.strings["name"], "playlists", {})
+        if not playlists:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> У вас еще нет ни одного плейлиста.")
+            return
+
+        search_query = args.lower()
+        found_tracks = []
+
+        for pl_name, tracks in playlists.items():
+            for track in tracks:
+                title = track.get("title", "").lower()
+                performer = track.get("performer", "").lower()
+                if search_query in title or search_query in performer:
+                    if not any(t["msg_id"] == track["msg_id"] and t["chat_id"] == track["chat_id"] for t in found_tracks):
+                        found_tracks.append(track)
+                    if len(found_tracks) >= 5:
+                        break
+            if len(found_tracks) >= 5:
+                break
+        
+        if not found_tracks:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек по запросу <code>{args}</code> не найден.")
+            return
+
+        msg_status = await utils.answer(message, f"<b>[MusicPlaylists]</b> Найдено треков: {len(found_tracks)}. Отправка...")
+        
+        for track in found_tracks:
+            try:
+                msg = await self.client.get_messages(track["chat_id"], ids=track["msg_id"])
+                if msg and msg.media:
+                    await self.client.send_file(message.peer_id, msg.media)
+                else:
+                    await self.client.send_message(
+                        message.peer_id, 
+                        f"<i>❌ Не удалось загрузить трек (удален или недоступен): {track['performer']} - {track['title']}</i>"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to play track {track['title']}: {e}")
+                await self.client.send_message(
+                    message.peer_id, 
+                    f"<i>❌ Не удалось загрузить трек: {track['performer']} - {track['title']}</i>"
+                )
+        
+        if msg_status:
+            await msg_status.delete()
 
     @loader.command()
     async def plexportcmd(self, message):

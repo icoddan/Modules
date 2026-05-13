@@ -4,12 +4,13 @@ from .. import loader, utils
 import logging
 import json
 import io
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 @loader.tds
 class MusicPlaylistsMod(loader.Module):
-    """Модуль для создания и управления музыкальными плейлистами"""
+    """Модуль для создания и управления музыкальными плейлистами, а также поиска текстов песен"""
     strings = {"name": "MusicPlaylists"}
 
     async def client_ready(self, client, db):
@@ -352,3 +353,64 @@ class MusicPlaylistsMod(loader.Module):
         self.db.set(self.strings["name"], "playlists", playlists)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно импортирован! ({len(data)} треков)")
+
+    @loader.command()
+    async def pllyricscmd(self, message):
+        """(реплай на аудио) - Найти текст песни"""
+        reply = await message.get_reply_message()
+        if not reply or not reply.audio:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, ответьте на аудиосообщение.")
+            return
+        
+        title = ""
+        performer = ""
+        file_name = ""
+        
+        if reply.document:
+            for attr in reply.document.attributes:
+                if hasattr(attr, 'title') and hasattr(attr, 'performer'):
+                    title = attr.title or ""
+                    performer = attr.performer or ""
+                if hasattr(attr, 'file_name'):
+                    file_name = attr.file_name or ""
+        
+        query = f"{performer} {title}".strip()
+        if not query and file_name:
+            query = file_name.rsplit('.', 1)[0]
+            
+        if not query:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Не удалось определить название трека.")
+            return
+
+        msg_status = await utils.answer(message, f"<b>[MusicPlaylists]</b> Поиск текста для <b>{query}</b>...")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://lrclib.net/api/search", params={"q": query}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and isinstance(data, list) and len(data) > 0:
+                            track_name = data[0].get("trackName", title)
+                            artist_name = data[0].get("artistName", performer)
+                            lyrics = data[0].get("plainLyrics") or data[0].get("syncedLyrics")
+                            
+                            if lyrics:
+                                text = f"<b>🎵 Текст песни: {artist_name} — {track_name}</b>\n\n<code>{lyrics}</code>"
+                                if len(text) > 4096:
+                                    file = io.BytesIO(lyrics.encode('utf-8'))
+                                    file.name = f"{artist_name} - {track_name}.txt"
+                                    await self.client.send_file(
+                                        message.peer_id,
+                                        file,
+                                        caption=f"<b>[MusicPlaylists]</b> Текст песни <b>{artist_name} — {track_name}</b>",
+                                        reply_to=reply.id
+                                    )
+                                    if msg_status:
+                                        await msg_status.delete()
+                                else:
+                                    await utils.answer(msg_status, text)
+                                return
+        except Exception as e:
+            logger.error(f"Error fetching lyrics: {e}")
+
+        await utils.answer(msg_status, f"<b>[MusicPlaylists]</b> Текст песни для <b>{query}</b> не найден.")

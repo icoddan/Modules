@@ -49,6 +49,12 @@ class MusicPlaylistsMod(loader.Module):
         
         del playlists[args]
         self.db.set(self.strings["name"], "playlists", playlists)
+        
+        banners = self.db.get(self.strings["name"], "banners", {})
+        if args in banners:
+            del banners[args]
+            self.db.set(self.strings["name"], "banners", banners)
+            
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> удален.")
 
     @loader.command()
@@ -59,9 +65,11 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> У вас еще нет ни одного плейлиста.")
             return
         
+        banners = self.db.get(self.strings["name"], "banners", {})
         text = "<b>🎵 Ваши плейлисты:</b>\n\n"
         for name, tracks in playlists.items():
-            text += f"🎧 <code>{name}</code> — {len(tracks)} треков\n"
+            has_banner = " 🖼" if name in banners else ""
+            text += f"🎧 <code>{name}</code> — {len(tracks)} треков{has_banner}\n"
         
         await utils.answer(message, text)
 
@@ -135,6 +143,51 @@ class MusicPlaylistsMod(loader.Module):
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{removed['performer']} - {removed['title']}</b> удален из <code>{pl_name}</code>.")
 
     @loader.command()
+    async def plbannercmd(self, message):
+        """<название> (реплай на медиа) - Установить баннер для плейлиста"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
+            return
+        
+        reply = await message.get_reply_message()
+        if not reply or not reply.media:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, ответьте на медиасообщение (фото/видео/гиф).")
+            return
+        
+        playlists = self.db.get(self.strings["name"], "playlists", {})
+        if args not in playlists:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
+            return
+        
+        banners = self.db.get(self.strings["name"], "banners", {})
+        banners[args] = {
+            "chat_id": reply.chat_id,
+            "msg_id": reply.id
+        }
+        self.db.set(self.strings["name"], "banners", banners)
+        
+        await utils.answer(message, f"<b>[MusicPlaylists]</b> Баннер для плейлиста <code>{args}</code> успешно установлен!")
+
+    @loader.command()
+    async def plrmbannercmd(self, message):
+        """<название> - Удалить баннер плейлиста"""
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
+            return
+        
+        banners = self.db.get(self.strings["name"], "banners", {})
+        if args not in banners:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> У плейлиста <code>{args}</code> нет баннера.")
+            return
+        
+        del banners[args]
+        self.db.set(self.strings["name"], "banners", banners)
+        
+        await utils.answer(message, f"<b>[MusicPlaylists]</b> Баннер плейлиста <code>{args}</code> удален.")
+
+    @loader.command()
     async def playlistcmd(self, message):
         """<название> - Просмотр треков в плейлисте"""
         args = utils.get_args_raw(message)
@@ -156,6 +209,21 @@ class MusicPlaylistsMod(loader.Module):
         for i, track in enumerate(tracks, 1):
             text += f"<b>{i}.</b> {track['performer']} — {track['title']}\n"
         
+        banners = self.db.get(self.strings["name"], "banners", {})
+        if args in banners:
+            banner_data = banners[args]
+            try:
+                msg = await self.client.get_messages(banner_data["chat_id"], ids=banner_data["msg_id"])
+                if msg and msg.media:
+                    if len(text) <= 1024:
+                        await self.client.send_file(message.peer_id, msg.media, caption=text)
+                        await message.delete()
+                        return
+                    else:
+                        await self.client.send_file(message.peer_id, msg.media, caption=f"<b>🎵 Плейлист: <code>{args}</code></b>")
+            except Exception as e:
+                logger.error(f"Failed to load banner: {e}")
+        
         await utils.answer(message, text)
 
     @loader.command()
@@ -175,6 +243,16 @@ class MusicPlaylistsMod(loader.Module):
         if not tracks:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> пуст.")
             return
+        
+        banners = self.db.get(self.strings["name"], "banners", {})
+        if args in banners:
+            banner_data = banners[args]
+            try:
+                msg = await self.client.get_messages(banner_data["chat_id"], ids=banner_data["msg_id"])
+                if msg and msg.media:
+                    await self.client.send_file(message.peer_id, msg.media, caption=f"<b>🎵 Воспроизведение плейлиста: <code>{args}</code></b>")
+            except Exception as e:
+                logger.error(f"Failed to load banner: {e}")
         
         msg_status = await utils.answer(message, f"<b>[MusicPlaylists]</b> Воспроизведение <code>{args}</code>...")
         
@@ -316,7 +394,13 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
         
-        data = playlists[args]
+        banners = self.db.get(self.strings["name"], "banners", {})
+        
+        data = {
+            "tracks": playlists[args],
+            "banner": banners.get(args)
+        }
+        
         file = io.BytesIO(json.dumps(data, ensure_ascii=False, indent=4).encode('utf-8'))
         file.name = f"{args}_playlist.json"
         
@@ -345,11 +429,17 @@ class MusicPlaylistsMod(loader.Module):
             content = await reply.download_media(bytes)
             data = json.loads(content.decode('utf-8'))
             
-            if not isinstance(data, list):
-                await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный формат файла: ожидался список.")
+            if isinstance(data, list):
+                tracks = data
+                banner = None
+            elif isinstance(data, dict) and "tracks" in data:
+                tracks = data["tracks"]
+                banner = data.get("banner")
+            else:
+                await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный формат файла.")
                 return
             
-            for track in data:
+            for track in tracks:
                 if not isinstance(track, dict) or not all(k in track for k in ["chat_id", "msg_id", "title", "performer"]):
                     await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный формат файла: отсутствуют необходимые ключи трека.")
                     return
@@ -359,10 +449,15 @@ class MusicPlaylistsMod(loader.Module):
             return
             
         playlists = self.db.get(self.strings["name"], "playlists", {})
-        playlists[args] = data
+        playlists[args] = tracks
         self.db.set(self.strings["name"], "playlists", playlists)
         
-        await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно импортирован! ({len(data)} треков)")
+        if banner:
+            banners = self.db.get(self.strings["name"], "banners", {})
+            banners[args] = banner
+            self.db.set(self.strings["name"], "banners", banners)
+        
+        await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно импортирован! ({len(tracks)} треков)")
 
     @loader.command()
     async def pllyricscmd(self, message):

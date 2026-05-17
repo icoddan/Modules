@@ -150,6 +150,61 @@ class MusicPlaylistsMod(loader.Module):
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{removed['performer']} - {removed['title']}</b> удален из <code>{pl_name}</code>.")
 
     @loader.command()
+    async def plrencmd(self, message):
+        """<название> <индекс> <Новый исполнитель> - <Новое название> - Изменить название трека в плейлисте"""
+        args_raw = utils.get_args_raw(message)
+        if not args_raw:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Укажите аргументы: <code>&lt;название&gt; &lt;индекс&gt; &lt;Новый исполнитель&gt; - &lt;Новое название&gt;</code>")
+            return
+            
+        playlists = self.db.get(self.strings["name"], "playlists", {})
+        
+        pl_name = None
+        for name in sorted(playlists.keys(), key=len, reverse=True):
+            if args_raw.startswith(name + " "):
+                pl_name = name
+                break
+                
+        if not pl_name:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Плейлист не найден. Проверьте правильность названия.")
+            return
+            
+        remaining = args_raw[len(pl_name):].strip()
+        parts = remaining.split(maxsplit=1)
+        
+        if len(parts) < 2:
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Укажите индекс и новое название трека.")
+            return
+            
+        index_str, new_name = parts
+        
+        if not index_str.isdigit():
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Индекс должен быть числом.")
+            return
+            
+        index = int(index_str) - 1
+        
+        if index < 0 or index >= len(playlists[pl_name]):
+            await utils.answer(message, "<b>[MusicPlaylists]</b> Неверный индекс трека.")
+            return
+            
+        if " - " in new_name:
+            performer, title = new_name.split(" - ", maxsplit=1)
+        else:
+            performer = "Неизвестный исполнитель"
+            title = new_name
+            
+        old_performer = playlists[pl_name][index].get("performer", "Неизвестный исполнитель")
+        old_title = playlists[pl_name][index].get("title", "Неизвестный трек")
+        
+        playlists[pl_name][index]["performer"] = performer.strip()
+        playlists[pl_name][index]["title"] = title.strip()
+        
+        self.db.set(self.strings["name"], "playlists", playlists)
+        
+        await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{old_performer} - {old_title}</b> переименован в <b>{performer.strip()} - {title.strip()}</b> в плейлисте <code>{pl_name}</code>.")
+
+    @loader.command()
     async def plbannercmd(self, message):
         """<название> (реплай на медиа) - Установить баннер для плейлиста"""
         args = utils.get_args_raw(message)

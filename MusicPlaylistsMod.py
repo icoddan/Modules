@@ -99,9 +99,16 @@ class MusicPlaylistsMod(loader.Module):
                     title = attr.title or title
                     performer = attr.performer or performer
         
+        try:
+            caption_text = "НЕ УДАЛЯТЬ , ИНАЧЕ ТРЕК ПЕРЕСТАНЕТ РАБОТАТЬ В ПЛЕЙЛИСТЕ"
+            saved_msg = await self.client.send_file("me", reply.media, caption=caption_text)
+        except Exception as e:
+            await utils.answer(message, f"<b>[MusicPlaylists]</b> Ошибка при сохранении трека в избранное: {e}")
+            return
+        
         track_data = {
-            "chat_id": reply.chat_id,
-            "msg_id": reply.id,
+            "chat_id": saved_msg.chat_id,
+            "msg_id": saved_msg.id,
             "title": title,
             "performer": performer
         }

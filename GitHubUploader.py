@@ -74,7 +74,7 @@ class GitHubUploaderMod(loader.Module):
             
             # 2. Загрузка или обновление файла
             payload = {
-                "message": f"Загрузка {filename} через Hikka Userbot",
+                "message": f"Загрузка {filename} через Heroku Userbot",
                 "content": base64.b64encode(content).decode('utf-8'),
                 "branch": branch
             }

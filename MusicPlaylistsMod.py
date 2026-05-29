@@ -562,7 +562,7 @@ class MusicPlaylistsMod(loader.Module):
                             lyrics = data[0].get("plainLyrics") or data[0].get("syncedLyrics")
                             
                             if lyrics:
-                                text = f"<b>🎵 Текст песни: {artist_name} — {track_name}</b>\n\n<code>{lyrics}</code>"
+                                text = f"<b>🎵 Текст песни: {artist_name} — {track_name}</b>\n\n<blockquote expandable>{lyrics}</blockquote>"
                                 if len(text) > 4096:
                                     file = io.BytesIO(lyrics.encode('utf-8'))
                                     file.name = f"{artist_name} - {track_name}.txt"

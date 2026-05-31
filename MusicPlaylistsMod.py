@@ -66,10 +66,11 @@ class MusicPlaylistsMod(loader.Module):
             return
         
         banners = self.db.get(self.strings["name"], "banners", {})
-        text = "<b>🎵 Ваши плейлисты:</b>\n\n"
+        text = "<b>🎵 Ваши плейлисты:</b>\n<blockquote expandable>"
         for name, tracks in playlists.items():
             has_banner = " 🖼" if name in banners else ""
             text += f"🎧 <code>{name}</code> — {len(tracks)} треков{has_banner}\n"
+        text += "</blockquote>"
         
         await utils.answer(message, text)
 
@@ -267,9 +268,10 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> пуст.")
             return
         
-        text = f"<b>🎵 Плейлист: <code>{args}</code></b>\n\n"
+        text = f"<b>🎵 Плейлист: <code>{args}</code></b>\n<blockquote expandable>"
         for i, track in enumerate(tracks, 1):
             text += f"<b>{i}.</b> {track['performer']} — {track['title']}\n"
+        text += "</blockquote>"
         
         banners = self.db.get(self.strings["name"], "banners", {})
         if args in banners:

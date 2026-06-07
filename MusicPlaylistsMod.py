@@ -5,6 +5,7 @@ import logging
 import json
 import io
 import aiohttp
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,101 @@ class MusicPlaylistsMod(loader.Module):
         self.client = client
         self.db = db
 
+    async def _get_target(self):
+        chat = None
+        async for dialog in self.client.iter_dialogs():
+            if dialog.name == "heroku-userbot" and dialog.is_group:
+                chat = dialog.entity
+                break
+
+        has_forum_support = True
+        try:
+            from telethon.tl.functions.channels import ToggleForumRequest, GetForumTopicsRequest, CreateForumTopicRequest
+        except ImportError:
+            has_forum_support = False
+
+        if not chat:
+            from telethon.tl.functions.channels import CreateChannelRequest
+            try:
+                result = await self.client(CreateChannelRequest(
+                    title="heroku-userbot",
+                    about="MusicPlaylists storage",
+                    megagroup=True
+                ))
+                chat = result.chats[0]
+                if has_forum_support:
+                    try:
+                        await self.client(ToggleForumRequest(channel=chat, enabled=True))
+                    except Exception as e:
+                        logger.error(f"Failed to enable forum: {e}")
+            except Exception as e:
+                logger.error(f"Failed to create heroku-userbot group: {e}")
+                return "me", None
+
+        if chat != "me" and has_forum_support and not getattr(chat, 'forum', False):
+            try:
+                await self.client(ToggleForumRequest(channel=chat, enabled=True))
+                chat = await self.client.get_entity(chat.id)
+            except Exception as e:
+                logger.error(f"Failed to enable forum: {e}")
+
+        topic_id = self.db.get(self.name, "topic_id")
+        topic_chat_id = self.db.get(self.name, "topic_chat_id")
+
+        if chat != "me" and has_forum_support and (not topic_id or topic_chat_id != chat.id):
+            try:
+                topics_res = await self.client(GetForumTopicsRequest(
+                    channel=chat,
+                    offset_date=None,
+                    offset_id=0,
+                    offset_topic=0,
+                    limit=100
+                ))
+                for t in topics_res.topics:
+                    if t.title == "MusicPlaylists":
+                        topic_id = t.id
+                        break
+            except Exception as e:
+                logger.error(f"Failed to get forum topics: {e}")
+
+            if not topic_id:
+                try:
+                    topic_res = await self.client(CreateForumTopicRequest(
+                        channel=chat,
+                        title="MusicPlaylists",
+                        random_id=random.randint(1, 2**63 - 1)
+                    ))
+                    for update in topic_res.updates:
+                        if hasattr(update, 'message') and hasattr(update.message, 'action'):
+                            from telethon.tl.types import MessageActionTopicCreate
+                            if isinstance(update.message.action, MessageActionTopicCreate):
+                                topic_id = update.message.id
+                                break
+                    if not topic_id:
+                        topics_res = await self.client(GetForumTopicsRequest(
+                            channel=chat,
+                            offset_date=None,
+                            offset_id=0,
+                            offset_topic=0,
+                            limit=100
+                        ))
+                        for t in topics_res.topics:
+                            if t.title == "MusicPlaylists":
+                                topic_id = t.id
+                                break
+                except Exception as e:
+                    logger.error(f"Failed to create forum topic: {e}")
+                    topic_id = None
+
+            if topic_id:
+                self.db.set(self.name, "topic_id", topic_id)
+                self.db.set(self.name, "topic_chat_id", chat.id)
+
+        if not has_forum_support:
+            topic_id = None
+
+        return chat, topic_id
+
     @loader.command()
     async def plcreatecmd(self, message):
         """<название> - Создать новый плейлист"""
@@ -25,13 +121,13 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> уже существует.")
             return
         
         playlists[args] = []
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно создан!")
 
     @loader.command()
@@ -42,30 +138,30 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
         
         del playlists[args]
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         if args in banners:
             del banners[args]
-            self.db.set(self.strings["name"], "banners", banners)
+            self.db.set(self.name, "banners", banners)
             
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> удален.")
 
     @loader.command()
     async def pllistcmd(self, message):
         """Список всех ваших плейлистов"""
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if not playlists:
             await utils.answer(message, "<b>[MusicPlaylists]</b> У вас еще нет ни одного плейлиста.")
             return
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         text = "<b>🎵 Ваши плейлисты:</b>\n<blockquote expandable>"
         for name, tracks in playlists.items():
             has_banner = " 🖼" if name in banners else ""
@@ -87,7 +183,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, ответьте на аудиосообщение.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден. Сначала создайте его с помощью .plcreate")
             return
@@ -100,9 +196,13 @@ class MusicPlaylistsMod(loader.Module):
                     title = attr.title or title
                     performer = attr.performer or performer
         
+        chat, topic_id = await self._get_target()
         try:
             caption_text = "НЕ УДАЛЯТЬ , ИНАЧЕ ТРЕК ПЕРЕСТАНЕТ РАБОТАТЬ В ПЛЕЙЛИСТЕ"
-            saved_msg = await self.client.send_file("me", reply.media, caption=caption_text)
+            if topic_id:
+                saved_msg = await self.client.send_file(chat, reply.media, caption=caption_text, reply_to=topic_id)
+            else:
+                saved_msg = await self.client.send_file(chat, reply.media, caption=caption_text)
         except Exception as e:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Ошибка при сохранении трека в избранное: {e}")
             return
@@ -115,7 +215,7 @@ class MusicPlaylistsMod(loader.Module):
         }
         
         playlists[args].append(track_data)
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{performer} - {title}</b> добавлен в <code>{args}</code>!")
 
@@ -135,7 +235,7 @@ class MusicPlaylistsMod(loader.Module):
             return
         
         index = int(index_str) - 1
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         
         if pl_name not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{pl_name}</code> не найден.")
@@ -146,7 +246,7 @@ class MusicPlaylistsMod(loader.Module):
             return
         
         removed = playlists[pl_name].pop(index)
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{removed['performer']} - {removed['title']}</b> удален из <code>{pl_name}</code>.")
 
@@ -158,7 +258,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Укажите аргументы: <code>&lt;название&gt; &lt;индекс&gt; &lt;Новый исполнитель&gt; - &lt;Новое название&gt;</code>")
             return
             
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         
         pl_name = None
         for name in sorted(playlists.keys(), key=len, reverse=True):
@@ -201,7 +301,7 @@ class MusicPlaylistsMod(loader.Module):
         playlists[pl_name][index]["performer"] = performer.strip()
         playlists[pl_name][index]["title"] = title.strip()
         
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Трек <b>{old_performer} - {old_title}</b> переименован в <b>{performer.strip()} - {title.strip()}</b> в плейлисте <code>{pl_name}</code>.")
 
@@ -218,17 +318,17 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, ответьте на медиасообщение (фото/видео/гиф).")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         banners[args] = {
             "chat_id": reply.chat_id,
             "msg_id": reply.id
         }
-        self.db.set(self.strings["name"], "banners", banners)
+        self.db.set(self.name, "banners", banners)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Баннер для плейлиста <code>{args}</code> успешно установлен!")
 
@@ -240,13 +340,13 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         if args not in banners:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> У плейлиста <code>{args}</code> нет баннера.")
             return
         
         del banners[args]
-        self.db.set(self.strings["name"], "banners", banners)
+        self.db.set(self.name, "banners", banners)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Баннер плейлиста <code>{args}</code> удален.")
 
@@ -258,7 +358,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
@@ -273,7 +373,7 @@ class MusicPlaylistsMod(loader.Module):
             text += f"<b>{i}.</b> {track['performer']} — {track['title']}\n"
         text += "</blockquote>"
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         if args in banners:
             banner_data = banners[args]
             try:
@@ -298,7 +398,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
@@ -308,7 +408,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> пуст.")
             return
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         if args in banners:
             banner_data = banners[args]
             try:
@@ -355,7 +455,7 @@ class MusicPlaylistsMod(loader.Module):
             return
         
         pl_name = " ".join(parts)
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         
         if pl_name not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{pl_name}</code> не найден.")
@@ -399,7 +499,7 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название трека для поиска.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if not playlists:
             await utils.answer(message, "<b>[MusicPlaylists]</b> У вас еще нет ни одного плейлиста.")
             return
@@ -453,12 +553,12 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, "<b>[MusicPlaylists]</b> Пожалуйста, укажите название плейлиста.")
             return
         
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         if args not in playlists:
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> не найден.")
             return
         
-        banners = self.db.get(self.strings["name"], "banners", {})
+        banners = self.db.get(self.name, "banners", {})
         
         data = {
             "tracks": playlists[args],
@@ -512,14 +612,14 @@ class MusicPlaylistsMod(loader.Module):
             await utils.answer(message, f"<b>[MusicPlaylists]</b> Ошибка при чтении файла: {e}")
             return
             
-        playlists = self.db.get(self.strings["name"], "playlists", {})
+        playlists = self.db.get(self.name, "playlists", {})
         playlists[args] = tracks
-        self.db.set(self.strings["name"], "playlists", playlists)
+        self.db.set(self.name, "playlists", playlists)
         
         if banner:
-            banners = self.db.get(self.strings["name"], "banners", {})
+            banners = self.db.get(self.name, "banners", {})
             banners[args] = banner
-            self.db.set(self.strings["name"], "banners", banners)
+            self.db.set(self.name, "banners", banners)
         
         await utils.answer(message, f"<b>[MusicPlaylists]</b> Плейлист <code>{args}</code> успешно импортирован! ({len(tracks)} треков)")
 
